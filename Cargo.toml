@@ -1,0 +1,23 @@
+[package]
+# Cargo rejects package names that start with a digit, so this is "v2-2496z" (like v1's "v1-2496z").
+name = "v2-2496z"
+version = "0.1.0"
+edition = "2024"
+
+[profile.release]
+opt-level = 3       # optimize for speed (v1 used "z" = size)
+lto = "fat"
+codegen-units = 1   # lets LLVM inline across the whole crate
+
+# These fields configure default behavior for uploads with `cargo v5`.
+[package.metadata.v5]
+upload-strategy = "differential"
+slot = 1
+icon = "cool-x"
+compress = true
+
+[dependencies]
+vexide = { version = "0.8.0", features = ["full", "default-sdk"] }
+# Raw controller-text call so the auton error display doesn't allocate (see display.rs).
+# Same version vexide 0.8 uses, so it's not a second copy.
+vex-sdk = "0.28"
