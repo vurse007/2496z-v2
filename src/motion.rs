@@ -8,7 +8,7 @@ use vexide::prelude::Controller;
 use crate::config;
 use crate::display::{show_error, show_final_error};
 use crate::drive::Drivetrain;
-use crate::localization::Localizer;
+use crate::localization::{Encoder, Localizer};
 use crate::pid::Settle;
 use crate::ticker::Ticker;
 
@@ -69,10 +69,10 @@ impl Drivetrain {
         let mut ticker = Ticker::new(config::LOOP_PERIOD);
 
         loop {
-            let Some(pose) = loc.pose() else {
+            let Some(heading) = loc.heading_deg() else {
                 break; // IMU unplugged or calibrating: bail instead of spinning forever
             };
-            let error = wrap_degrees(target_heading, pose.heading_deg);
+            let error = wrap_degrees(target_heading, heading);
             let speed = self.turn_pid.calculate(error, 0.0, scale);
 
             match side {
@@ -93,8 +93,8 @@ impl Drivetrain {
         self.stop();
 
         let final_error = loc
-            .pose()
-            .map_or(self.turn_pid.error(), |p| wrap_degrees(target_heading, p.heading_deg));
+            .heading_deg()
+            .map_or(self.turn_pid.error(), |h| wrap_degrees(target_heading, h));
         show_final_error(controller, "turn", final_error).await;
     }
 
@@ -111,7 +111,7 @@ impl Drivetrain {
         self.drive_pid.reset();
         self.heading_pid.reset();
 
-        let Some(start) = self.distance_deg() else {
+        let Some(start) = self.position_deg() else {
             return;
         };
         let mut settle = Settle::new(self.drive_pid.config());
@@ -119,7 +119,7 @@ impl Drivetrain {
         let mut ticker = Ticker::new(config::LOOP_PERIOD);
 
         loop {
-            let Some(current) = self.distance_deg() else {
+            let Some(current) = self.position_deg() else {
                 break;
             };
             let traveled = current - start;
@@ -129,7 +129,7 @@ impl Drivetrain {
 
             // Heading hold. With no IMU, skip the correction and just drive.
             let heading_error =
-                loc.pose().map_or(0.0, |p| wrap_degrees(self.target_heading, p.heading_deg));
+                loc.heading_deg().map_or(0.0, |h| wrap_degrees(self.target_heading, h));
             let correction = self.heading_pid.calculate(heading_error, 0.0, 1.0);
 
             // Leave room for the correction. Otherwise at full speed one side clamps at 12 V
@@ -147,7 +147,7 @@ impl Drivetrain {
         self.stop();
 
         let final_error = self
-            .distance_deg()
+            .position_deg()
             .map_or(self.drive_pid.error(), |p| distance - (p - start));
         show_final_error(controller, "drive", final_error).await;
     }

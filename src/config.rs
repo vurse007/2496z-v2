@@ -37,6 +37,68 @@ pub const DRIVE_CURVE_T: f64 = 2.8;
 
 pub const IMU_PORT: u8 = 7;
 
+// ---------------------------------------------------------------- controller screen
+
+/// How often the pose readout writes a line. The controller only takes one write per ~50 ms
+/// anyway, and the readout alternates lines 2 and 3, so each line refreshes every 100 ms.
+pub const TELEMETRY_PERIOD: Duration = Duration::from_millis(50);
+
+// ---------------------------------------------------------------- odometry
+//
+// Each tracking wheel is optional. `None` for the vertical pod = use the drive motors instead.
+// See the table in `localization/mod.rs` for all four setups.
+
+/// One tracking wheel (a rotation sensor on an unpowered omni).
+#[derive(Clone, Copy)]
+pub struct PodConfig {
+    pub port: u8,
+    /// Must make forward (vertical pod) / rightward (horizontal pod) travel read positive.
+    pub direction: Direction,
+    pub wheel_diameter_in: f64,
+    /// Distance from the tracking center in inches. Vertical pod: + = left of center.
+    /// Horizontal pod: + = forward of center. Sanity check: spinning in place should leave
+    /// x/y near 0. If it drifts, the sign or value is wrong.
+    pub offset_in: f64,
+}
+
+// Both pods are set, so odometry uses them and not the drive motors.
+// PLACEHOLDERS: set port / direction / wheel size / offset to match the robot. Check:
+//   - push straight forward: the vertical pod reads positive (else flip direction)
+//   - push straight right:   the horizontal pod reads positive (else flip direction)
+//   - spin in place: x/y on the controller should stay near 0 (else fix the offsets)
+// Port 5 / Forward / 2 in for the vertical pod are v1's placeholder values. Port 9 is just a
+// free port.
+
+/// Forward/backward tracking wheel.
+pub const VERTICAL_POD: Option<PodConfig> = Some(PodConfig {
+    port: 5,
+    direction: Forward,
+    wheel_diameter_in: 2.0,
+    offset_in: 0.0,
+});
+
+/// Sideways tracking wheel.
+pub const HORIZONTAL_POD: Option<PodConfig> = Some(PodConfig {
+    port: 9,
+    direction: Forward,
+    wheel_diameter_in: 2.0,
+    offset_in: 0.0,
+});
+
+/// Only used by the motor fallback (`VERTICAL_POD = None`), so these don't matter right now.
+/// PLACEHOLDERS: rampage-v3's values, not measured on this robot. Measure before trusting x/y.
+pub const DRIVE_WHEEL_DIAMETER_IN: f64 = 2.75;
+/// Wheel revolutions per motor revolution.
+pub const DRIVE_GEAR_RATIO: f64 = 0.8;
+
+/// Inches of travel per degree of wheel rotation: pi * d / 360.
+pub const fn inches_per_deg(wheel_diameter_in: f64) -> f64 {
+    std::f64::consts::PI * wheel_diameter_in / 360.0
+}
+
+/// Precomputed at compile time, so the fallback costs one multiply per tick.
+pub const DRIVE_IN_PER_MOTOR_DEG: f64 = inches_per_deg(DRIVE_WHEEL_DIAMETER_IN) * DRIVE_GEAR_RATIO;
+
 // ---------------------------------------------------------------- lift
 
 pub const LIFT_MOTORS: [MotorPort; 2] = [(13, Forward), (1, Forward)];

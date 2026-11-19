@@ -6,6 +6,7 @@
 //! - `drive`, `lift` subsystems
 //! - `motor_group`   fixed-size motor groups with write-on-change
 //! - `localization`  `Pose`, `Encoder`, `Localizer` (odometry + MCL plug in here)
+//! - `telemetry`     background pose readout on the controller
 //! - `pid`, `ticker`, `display`  control building blocks
 
 mod config;
@@ -18,6 +19,7 @@ mod motion;
 mod motor_group;
 mod pid;
 mod robot;
+mod telemetry;
 mod ticker;
 
 use vexide::peripherals::DynamicPeripherals;

@@ -8,6 +8,7 @@ use crate::drive::Drivetrain;
 use crate::lift::Lift;
 use crate::localization::Localizer;
 use crate::motor_group::MotorGroup;
+use crate::telemetry;
 use crate::ticker::Ticker;
 
 pub struct Robot {
@@ -18,17 +19,22 @@ pub struct Robot {
     pub flipper: AdiDigitalOut,
     pub park: AdiDigitalOut,
     pub controller: Controller,
+    /// Handle to the background odometry task (it keeps running whether or not this is read).
     #[expect(dead_code, reason = "auton motion stack; used again once autons come back")]
     pub loc: Localizer,
 }
 
 impl Robot {
-    /// Calibrates the IMU first (~2-3 s, robot must be still), then builds everything else.
+    /// Builds the drivetrain, then calibrates the IMU (~2-3 s, robot must be still) and starts
+    /// background odometry and the controller pose readout, then builds everything else.
     /// Panics at startup if two devices share a port.
     pub async fn new(p: &mut DynamicPeripherals) -> Self {
-        let loc = Localizer::new(p).await;
+        let drive = Drivetrain::new(p);
+        let loc = Localizer::start(p, drive.encoders()).await;
+        let controller = p.take_primary_controller().expect("primary controller already taken");
+        telemetry::start(loc.clone(), controller.id()); // pose on controller lines 2-3
         Self {
-            drive: Drivetrain::new(p),
+            drive,
             lift: Lift::new(p),
             claw: MotorGroup::new(p, config::CLAW, config::CLAW_GEARSET, config::CLAW_BRAKE),
             toggles: MotorGroup::new(
@@ -39,7 +45,7 @@ impl Robot {
             ),
             flipper: AdiDigitalOut::new(adi_port(p, config::FLIPPER_ADI_PORT)),
             park: AdiDigitalOut::new(adi_port(p, config::PARK_ADI_PORT)),
-            controller: p.take_primary_controller().expect("primary controller already taken"),
+            controller,
             loc,
         }
     }

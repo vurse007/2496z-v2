@@ -1,5 +1,8 @@
 //! Six-motor tank drivetrain and the driver-control stick mapping.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use vexide::peripherals::DynamicPeripherals;
 
 use crate::config;
@@ -7,9 +10,28 @@ use crate::localization::Encoder;
 use crate::motor_group::MotorGroup;
 use crate::pid::Pid;
 
+/// The six drive motors. Kept in an `Rc<RefCell<..>>` so the background odometry task can
+/// read their encoders (the fallback when there's no vertical tracking wheel) while auton
+/// motions hold `&mut Drivetrain` across `.await`s.
+///
+/// Borrow rule: only borrow inside a plain (non-async) block, never across an `.await`.
+/// vexide runs every task on one thread and only switches at `.await`, so two borrows can
+/// never overlap and `borrow_mut()` can't panic. Odometry also uses `try_borrow` as a
+/// second safeguard.
+pub struct DriveMotors {
+    left: MotorGroup<3>,
+    right: MotorGroup<3>,
+}
+
+/// Distance driven in motor-encoder degrees: the average of both sides.
+impl Encoder for DriveMotors {
+    fn position_deg(&self) -> Option<f64> {
+        Some((self.left.position_deg()? + self.right.position_deg()?) * 0.5)
+    }
+}
+
 pub struct Drivetrain {
-    pub left: MotorGroup<3>,
-    pub right: MotorGroup<3>,
+    motors: Rc<RefCell<DriveMotors>>,
     /// Heading that `straight()` holds, which is the target of the last turn. Holding this
     /// instead of wherever the robot drifted keeps errors from stacking up over an auton.
     pub target_heading: f64,
@@ -21,15 +43,23 @@ pub struct Drivetrain {
 
 impl Drivetrain {
     pub fn new(p: &mut DynamicPeripherals) -> Self {
-        Self {
+        let motors = DriveMotors {
             left: MotorGroup::new(p, config::DRIVE_LEFT, config::DRIVE_GEARSET, config::DRIVE_BRAKE),
             right: MotorGroup::new(p, config::DRIVE_RIGHT, config::DRIVE_GEARSET, config::DRIVE_BRAKE),
+        };
+        Self {
+            motors: Rc::new(RefCell::new(motors)),
             target_heading: 0.0,
             heading_pid: Pid::new(config::HEADING_PID),
             turn_pid: Pid::new(config::TURN_PID),
             drive_pid: Pid::new(config::DRIVE_PID),
             curve: StickCurve::new(config::DRIVE_CURVE_T),
         }
+    }
+
+    /// Read-only encoder access for odometry. It shares the same motors; nothing is copied.
+    pub fn encoders(&self) -> Rc<RefCell<DriveMotors>> {
+        Rc::clone(&self.motors)
     }
 
     /// Split arcade from raw stick values (-127..=127). Same output as v1. When saturated, it
@@ -47,29 +77,35 @@ impl Drivetrain {
         let max = left.abs().max(right.abs());
         let to_volts = if max > 1.0 { 12.0 / max } else { 12.0 };
 
-        self.left.set_voltage(left * to_volts);
-        self.right.set_voltage(right * to_volts);
+        let mut m = self.motors.borrow_mut();
+        m.left.set_voltage(left * to_volts);
+        m.right.set_voltage(right * to_volts);
     }
 
     /// Volts, clamped to -12..=12.
     pub fn move_raw(&mut self, left: f64, right: f64) {
-        self.left.set_voltage(left.clamp(-12.0, 12.0));
-        self.right.set_voltage(right.clamp(-12.0, 12.0));
+        let mut m = self.motors.borrow_mut();
+        m.left.set_voltage(left.clamp(-12.0, 12.0));
+        m.right.set_voltage(right.clamp(-12.0, 12.0));
     }
 
     pub fn stop(&mut self) {
-        self.left.brake();
-        self.right.brake();
+        let mut m = self.motors.borrow_mut();
+        m.left.brake();
+        m.right.brake();
     }
 
     pub fn resync(&mut self) {
-        self.left.resync();
-        self.right.resync();
+        let mut m = self.motors.borrow_mut();
+        m.left.resync();
+        m.right.resync();
     }
+}
 
-    /// Distance driven in motor-encoder degrees: average of both sides.
-    pub fn distance_deg(&self) -> Option<f64> {
-        Some((self.left.position_deg()? + self.right.position_deg()?) * 0.5)
+/// `straight()` measures distance with this.
+impl Encoder for Drivetrain {
+    fn position_deg(&self) -> Option<f64> {
+        self.motors.borrow().position_deg()
     }
 }
 
